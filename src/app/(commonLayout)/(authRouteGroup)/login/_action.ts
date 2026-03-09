@@ -1,5 +1,10 @@
 "use server";
 
+import {
+  getDefaultDashboardRoute,
+  isValidRedirectForRole,
+  UserRole,
+} from "@/lib/authUtils";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { httpClient } from "@/lib/axios/httpClient";
 import { setTokenInCookies } from "@/lib/tokenUtils";
@@ -10,6 +15,7 @@ import { redirect } from "next/navigation";
 
 export const loginAction = async (
   payload: ILoginPayload,
+  redirectPath?: string,
 ): Promise<ILoginResponse | ApiErrorResponse> => {
   //parse payload using zod schema
   const parsePayload = loginZodSchema.safeParse(payload);
@@ -28,13 +34,24 @@ export const loginAction = async (
     );
 
     //set in token in cookies
-    const { accessToken, refreshToken, token } = response.data;
+    const { accessToken, refreshToken, token, user } = response.data;
+
+    const { role, emailVerified, needPasswordChange, email } = user;
 
     await setTokenInCookies("accessToken", accessToken);
     await setTokenInCookies("refreshToken", refreshToken);
     await setTokenInCookies("better-auth.session_token", token);
 
-    redirect("/dashboard");
+    if (needPasswordChange) {
+      redirect(`/reset-password?email=${email}`);
+    } else {
+      const targetPath =
+        redirectPath && isValidRedirectForRole(redirectPath, role as UserRole)
+          ? redirectPath
+          : getDefaultDashboardRoute(role as UserRole);
+
+      redirect(targetPath);
+    }
   } catch (error: any) {
     if (
       error &&
@@ -44,6 +61,14 @@ export const loginAction = async (
       error.digest.startsWith("NEXT_REDIRECT")
     ) {
       throw error; // Re-throw the redirect error to be handled by Next.js
+    }
+
+    if (
+      error &&
+      error.response &&
+      error.response.data === "Email not verified"
+    ) {
+      redirect(`/verify-email?email=${payload.email}`);
     }
 
     return {
